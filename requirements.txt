@@ -1,0 +1,7 @@
+Flask>=2.0
+discord.py>=2.0
+Flask-SQLAlchemy>=3.0
+SQLAlchemy>=2.0 # SQLAlchemy 2.0 スタイルを使うため
+python-dotenv>=0.15
+psycopg2-binary # PostgreSQL を使う場合 (DATABASE_URL を設定する場合)
+# 他に使うライブラリがあれば追記
