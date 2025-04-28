@@ -118,85 +118,199 @@ async def run_race_simulation(ctx: commands.Context, game: GameState, course_nam
             await channel.send(f"\n━━━━━━━━━━━━━━━━━━━━━\n**📢 LAP {current_lap}!**\n━━━━━━━━━━━━━━━━━━━━━")
             await asyncio.sleep(2)
 
-            # 1.2 イベントフェーズ
-            logger.debug(f"Lap {current_lap}: Starting event phase.")
-            # (革命)
-            rev_happened, rev_msg, _, _ = game.process_revolution()
-            if rev_happened:
-                await channel.send(f"🚨 **革命発生！** 🚨\n{rev_msg}")
-                await asyncio.sleep(3)
-                if game.check_game_end(): break
-            # (復活)
-            revived_players, revival_msgs = game.process_revivals()
-            if revival_msgs:
-                 await channel.send("✨ **復活チャンス！** ✨") # <- この行
-                 for msg in revival_msgs:
-                     await channel.send(msg)
-                     await asyncio.sleep(1.5)
-            # (強制脱落)
-            eliminated_players, forced_elim_msgs = game.process_forced_elimination()
-            if forced_elim_msgs:
-                await channel.send("💥 **アクシデント発生！** 💥")
-                await channel.send(forced_elim_msgs[0]); await asyncio.sleep(1)
-                await channel.send(forced_elim_msgs[1]); await asyncio.sleep(2)
-                if game.check_game_end(): break
-            # (大逆転)
-            comeback_happened, comeback_msg = game.process_great_comeback()
-            if comeback_happened:
-                 await channel.send("🎉 **奇跡発生！大逆転！** 🎉"); await channel.send(comeback_msg); await asyncio.sleep(3)
-                 break # ゲーム終了
+            # --- ★ 修正: 一騎打ちでないラップでのみ通常イベントを処理 ---
+            if not game.final_duel:
+                # 1.2 イベントフェーズ (革命、復活、強制脱落)
+                logger.debug(f"Lap {current_lap}: Starting event phase.")
+                # (革命)
+                rev_happened, rev_msg, _, _ = game.process_revolution()
+                if rev_happened:
+                    await channel.send(f"\n🚨 **革命発生！** 🚨\n{rev_msg}")
+                    await asyncio.sleep(3)
+                    if game.check_game_end(): break # イベントで終了する可能性
+                # (復活)
+                # (重要: 革命で終了していなければ復活チェック)
+                if not game.game_finished:
+                    revived_players, revival_msgs = game.process_revivals()
+                    if revival_msgs:
+                         await channel.send("\n🔥 **猛烈な追い上げ！** 🔥") # テキスト変更済み
+                         for msg in revival_msgs: await channel.send(msg); await asyncio.sleep(1.5)
+                # (強制脱落)
+                # (重要: 革命や復活で終了していなければ強制脱落チェック)
+                if not game.game_finished:
+                    eliminated_players, forced_elim_msgs = game.process_forced_elimination()
+                    if forced_elim_msgs:
+                        await channel.send("\n💥 **アクシデント発生！** 💥")
+                        await channel.send(forced_elim_msgs[0]); await asyncio.sleep(1)
+                        await channel.send(forced_elim_msgs[1]); await asyncio.sleep(2)
+                        if game.check_game_end(): break # イベントで終了する可能性
+            # --- ★ イベントフェーズの if ブロックここまで ---
 
-            # 1.3 アクションフェーズ
+           # bot.py の run_race_simulation 関数内
+
+            # 1.3 アクションフェーズ (ペア対決 or 一騎打ち)
             logger.debug(f"Lap {current_lap}: Starting action phase.")
             if game.game_finished: break
 
             if game.final_duel:
+                # 一騎打ち処理 (変更なし)
                 logger.info(f"Lap {current_lap}: Processing final duel.")
                 battle_msgs, outcome_msg = game.process_final_duel()
-                await channel.send("\n🔥 **最終決戦！一騎打ち！** 🔥"); await asyncio.sleep(1)
-                for msg in battle_msgs: await channel.send(msg); await asyncio.sleep(2.5)
-                await asyncio.sleep(1); await channel.send(f"\n**{outcome_msg}**")
+                if battle_msgs:
+                     await channel.send("\n🔥 **最終決戦！一騎打ち！** 🔥"); await asyncio.sleep(1)
+                     for msg in battle_msgs: await channel.send(msg); await asyncio.sleep(2.5)
+                     await asyncio.sleep(1)
+                await channel.send(f"\n**{outcome_msg}**")
                 break
             else:
+                # bot.py の run_race_simulation 関数内 (アクションフェーズの else ブロック)
+
+                # --- ★ 通常ラップのメッセージ送信方法を変更 ---
                 logger.debug(f"Lap {current_lap}: Processing pairwise lap.")
-                lap_messages = game.process_lap_pairwise()
-                if not lap_messages: await channel.send("🌀 静かなラップ...波乱は起きなかったようだ。"); await asyncio.sleep(1.5)
-                else:
-                    for msg in lap_messages: await channel.send(msg); await asyncio.sleep(2)
+                overtake_msgs, skill_msgs = game.process_lap_pairwise()
+
+                # 追い抜きメッセージをまとめる (変更なし)
+                if overtake_msgs:
+                    combined_overtakes = "\n💥 **今ラップの主な攻防！** 💥\n" + "\n".join(overtake_msgs)
+                    if len(combined_overtakes) > 2000:
+                         await channel.send("\n💥 **今ラップの主な攻防！** 💥\n（多数の追い抜きが発生）") # 短縮版
+                         logger.warning("Combined overtake message too long.")
+                    else:
+                         await channel.send(combined_overtakes)
+                    await asyncio.sleep(2)
+
+                # --- ★ スキルメッセージの表示数を制限する ---
+                if skill_msgs:
+                    max_skill_display = 5 # 表示する最大スキル数
+                    if len(skill_msgs) > max_skill_display:
+                        # リストからランダムに5つ選ぶ
+                        display_skills = random.sample(skill_msgs, max_skill_display)
+                        # 省略したことを示すメッセージを追加
+                        display_skills.append(f"（他 {len(skill_msgs) - max_skill_display} 人もスキルを発揮！）")
+                    else:
+                        # 5つ以下の場合はそのまま表示
+                        display_skills = skill_msgs
+
+                    combined_skills = "\n✨ **各車の走り！** ✨\n" + "\n".join(display_skills)
+
+                    # メッセージ長制限チェックは念のため残す
+                    if len(combined_skills) > 2000:
+                        await channel.send("✨ **各車の走り！** ✨\n（多くのプレイヤーがスキルを発揮！）") # 短縮版
+                        logger.warning("Combined skill message too long even after sampling.")
+                    else:
+                        await channel.send(combined_skills)
+                    await asyncio.sleep(2)
+                # --- ★ スキルメッセージ制限ここまで ---
+
+                # もし両方とも空だったら
+                if not overtake_msgs and not skill_msgs:
+                    await channel.send("\n🌀 静かなラップ...波乱は起きなかったようだ。")
+                    await asyncio.sleep(1.5)
+                # --- ★ メッセージ送信方法の変更ここまで ---
+
+            # (1.4 サマリーフェーズ以降は変更なし)
+            # ...
 
            # 1.4 サマリーフェーズ
-            logger.debug(f"Lap {current_lap}: Starting summary phase.")
-            if game.game_finished: break
+            logger.debug(f"[DEBUG] Lap {game.current_lap}: Starting summary phase.")
+            if game.game_finished: logger.debug("[DEBUG] Game finished before summary phase."); break
 
+            logger.debug("[DEBUG] Calling game.get_lap_summary()")
             summary = game.get_lap_summary()
-            # ★ 表示名を変更
+            logger.debug(f"[DEBUG] Lap summary data: {summary}")
+
+            # --- ★ トップグループの表示を条件分岐 ---
+            top_group_line = ""
+            if "survivor_names" in summary:
+                # 5人以下の場合: 名前を表示
+                survivor_names_str = ", ".join(summary['survivor_names'])
+                top_group_line = f" > トップグループ ({summary['survivors_count']}台): {survivor_names_str}"
+            else:
+                # 6人以上の場合: 人数のみ表示
+                top_group_line = f" > トップグループ: {summary['survivors_count']}台"
+            # --- ★ ここまで変更 ---
+
             summary_msg = (
-                f"\n📊 **LAP {current_lap} 結果**\n"
-                f" > トップグループ: {summary['survivors_count']}台\n" # 「生存」を「トップグループ」に
-                f" > 下位グループ: {summary['eliminated_names']}"    # 「脱落」を「下位グループ」に
+                f"📊 **LAP {game.current_lap} 結果**\n"
+                f"{top_group_line}\n" # ★ 変更した行を使用
+                f" > 下位グループ: {summary['eliminated_names']}"
             )
             if 'revived_names' in summary:
-                 summary_msg += f"\n > 追い上げ: {summary['revived_names']}" # 「復活」を「追い上げ」に
+                 summary_msg += f"\n > 追い上げ: {summary['revived_names']}"
+
+            logger.debug("[DEBUG] Sending lap summary message...")
             await channel.send(summary_msg)
+            # await channel.send("\u200B") # ★ 空行はサマリーの後には不要かも？ 好みで調整
             await asyncio.sleep(3)
+            logger.debug("[DEBUG] Lap summary sent.")
 
             if game.check_game_end(): logger.info(f"Game ended after lap {current_lap} summary."); break
 
-        # 2. ループ終了後 (ゲーム終了)
-        logger.info(f"Race simulation finished for channel {channel.id}.")
-        if game.winner and not game.great_comeback_occurred and not game.final_duel:
-             await channel.send(f"\n🏆🏆🏆 **レース終了！ 優勝者は {game.winner.name} です！おめでとう！** 🏆🏆🏆")
-        elif not game.winner and game.game_finished:
-             await channel.send("\n🏁 レース終了！今回は勝者なしとなりました...！")
+        # --- ★ 2. ループ終了後 (最終結果発表) ---
+        logger.info(f"[DEBUG] Exited main race loop for channel {channel.id}.")
 
+        final_standings_msg = None # 最終結果メッセージ用変数
+        outcome_already_sent = False # 一騎打ち/大逆転メッセージが送られたか
+
+        # まず、一騎打ち/大逆転の outcome_msg が送られたかチェック
+        # (ループ内で break する前に outcome_msg が送信されている想定)
+        # ※ただし、大逆転の場合は専用の結果メッセージをここで作る
+        if game.great_comeback_occurred and game.great_comeback_winner:
+            # 大逆転の場合
+             loser_names = " / ".join([p.name for p in game.great_comeback_losers])
+             final_standings_msg = (
+                 f"\n--- 最終結果 ---\n"
+                 f"🥇 **優勝:** {game.great_comeback_winner.name} (大逆転！)\n"
+                 f"🥈 **準優勝:** {loser_names} (同時)"
+             )
+             outcome_already_sent = True # 大逆転メッセージはループ内で送信済み扱い
+
+        elif game.final_duel and game.winner and game.second_place:
+             # 通常の一騎打ちで終了した場合
+             final_standings_msg = (
+                 f"\n--- 最終結果 ---\n"
+                 f"🥇 **優勝:** {game.winner.name}\n"
+                 f"🥈 **準優勝:** {game.second_place.name}"
+             )
+             outcome_already_sent = True # 一騎打ち結果メッセージはループ内で送信済み扱い
+
+        elif game.winner: # 一人残りでの通常終了
+             # まだ優勝者アナウンスがされていなければアナウンスする
+             if not outcome_already_sent:
+                 await channel.send(f"\n🏆🏆🏆 **レース終了！ 優勝者は {game.winner.name} です！おめでとう！** 🏆🏆🏆")
+                 await channel.send("\u200B") # 空行
+
+             # 結果表示
+             final_standings_msg = (
+                 f"\n--- 最終結果 ---\n"
+                 f"🥇 **優勝:** {game.winner.name}\n"
+                 f"(準優勝者なし)"
+             )
+
+        elif not game.winner and game.game_finished: # 勝者なし終了
+             if not outcome_already_sent:
+                 await channel.send("\n🏁 レース終了！今回は勝者なしとなりました...！")
+
+        # 最終結果メッセージがあれば送信
+        if final_standings_msg:
+            await channel.send(final_standings_msg)
+            logger.info(f"Final standings sent for channel {channel.id}")
+        # --- ★ 結果発表ここまで ---
+
+    # (エラーハンドリングとfinallyブロックは変更なし)
     except asyncio.CancelledError:
-         logger.warning(f"Race simulation task cancelled for channel {channel.id}")
+         logger.warning(f"[DEBUG] Race simulation task cancelled for channel {channel.id}")
          await channel.send("⚠️ レースシミュレーションがキャンセルされました。")
     except Exception as e:
-        logger.error(f"Error during race simulation in channel {channel.id}: {e}", exc_info=True)
+        logger.error(f"[DEBUG] Unhandled error during race simulation in channel {channel.id}: {e}", exc_info=True)
         await channel.send("レースの進行中に予期せぬエラーが発生しました。レースを中断します。")
     finally:
-         if channel.id in games: del games[channel.id]; logger.info(f"Removed game state for channel {channel.id}")
+         # (変更なし)
+         logger.debug(f"[DEBUG] Entering finally block for run_race_simulation channel {channel.id}")
+         if channel.id in games:
+             del games[channel.id]
+             logger.info(f"Removed game state for channel {channel.id}")
+         logger.info(f"[DEBUG] Exiting run_race_simulation for channel {channel.id}")
 
 
 # --- Botコマンド ---
@@ -225,7 +339,7 @@ async def start_race_command(ctx: commands.Context):
 
 
     # --- ★ 参加ボタンとビューの作成 (作戦選択式) ---
-    WAIT_TIME = 60.0 # 待機時間（秒）
+    WAIT_TIME = 15.0 # 待機時間（秒）
 
     view = View(timeout=WAIT_TIME)
 
