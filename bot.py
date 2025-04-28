@@ -339,7 +339,7 @@ async def start_race_command(ctx: commands.Context):
 
 
     # --- ★ 参加ボタンとビューの作成 (作戦選択式) ---
-    WAIT_TIME = 15.0 # 待機時間（秒）
+    WAIT_TIME = 60.0 # 待機時間（秒）
 
     view = View(timeout=WAIT_TIME)
 
